@@ -33,7 +33,7 @@ jupyterlab>=4.3,<5.0
 jupytext>=1.16,<2.0
 
 # ── Optional API judges (notebook 04) — pulled if you set API keys ──
-openai>=1.55,<2.0                       # gpt-4o-mini judge
+openai>=2.8,<3.0                        # gpt-4o-mini judge; compatible with Kaggle litellm
 anthropic>=0.40,<1.0                    # claude-haiku judge
 
 # ── Test ──────────────────────────────────────────────────────

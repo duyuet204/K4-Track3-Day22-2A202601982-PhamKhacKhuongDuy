@@ -70,16 +70,15 @@ assert torch.cuda.is_available(), "DPO needs a CUDA GPU. See HARDWARE-GUIDE.md."
 # ## 1. Load policy + reference (the VRAM story)
 #
 # **Critical:** DPO scores each answer under the policy (trainable) AND a frozen
-# reference. With PEFT we do **not** load a second model -- TRL toggles the LoRA
-# adapter *off* to get the reference forward pass on the same 4-bit base. The
-# extra VRAM vs SFT comes from two forward passes + holding chosen AND rejected
-# sequences, not from a second copy of the weights.
+# reference. Here both must start from the NB1 SFT checkpoint. We load that small
+# LoRA adapter twice on one shared 4-bit base: `default` is trained and
+# `reference` stays frozen. TRL switches between them for the two forward passes.
 
 # %%
 from unsloth import FastLanguageModel
 from peft import PeftModel
 
-# Policy — gets new DPO LoRA adapter on top of SFT LoRA
+# One quantized base shared by the trainable and reference adapters.
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=BASE_MODEL,
     max_seq_length=MAX_LEN,
@@ -89,35 +88,26 @@ model, tokenizer = FastLanguageModel.from_pretrained(
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
-# Load SFT adapter on top of base
-model = PeftModel.from_pretrained(model, str(SFT_PATH), is_trainable=True)
-print(f"Policy: {model.__class__.__name__} with SFT adapter loaded")
+# Load the same SFT checkpoint twice. `default` will receive DPO updates;
+# `reference` remains an immutable copy of the SFT policy at DPO step 0.
+model = PeftModel.from_pretrained(
+    model,
+    str(SFT_PATH),
+    adapter_name="default",
+    is_trainable=True,
+)
+model.load_adapter(str(SFT_PATH), adapter_name="reference", is_trainable=False)
+model.set_adapter("default")
+print(f"Policy adapters: {list(model.peft_config)} (active={model.active_adapter})")
 
 # %%
-# Wrap policy with NEW LoRA adapter for DPO updates (don't merge SFT — keep stacked)
-# Unsloth re-applies LoRA on top of the existing PeftModel.
-model = FastLanguageModel.get_peft_model(
-    model,
-    r=16,
-    lora_alpha=32,
-    lora_dropout=0.0,
-    bias="none",
-    target_modules=[
-        "q_proj", "k_proj", "v_proj", "o_proj",
-        "gate_proj", "up_proj", "down_proj",
-    ],
-    use_gradient_checkpointing="unsloth",
-    random_state=42,
-    use_rslora=False,
-    loftq_config=None,
-)
-print(f"Trainable params (DPO LoRA): {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
+print(f"Trainable params (DPO updates): {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
 
 # %% [markdown]
-# > **Why no separate `ref_model=` argument?** Modern TRL (≥ 0.12) auto-detects
-# > PEFT models and uses the *base model without the adapter* as the reference.
-# > That's the same memory layout: 1 base + 2 adapter sets in VRAM. No deepcopy
-# > needed.
+# > **Why no separate `ref_model=` argument?** TRL 0.19 can switch between named
+# > PEFT adapters. `model_adapter_name="default"` is the trainable SFT+DPO policy;
+# > `ref_adapter_name="reference"` is the frozen SFT policy. This avoids a second
+# > copy of the 4-bit base while preserving the correct DPO reference.
 
 # %% [markdown]
 # ## 2. Build DPOConfig (deck §5.2 hyperparameters)
@@ -143,6 +133,8 @@ dpo_config = DPOConfig(
     fp16=not torch.cuda.is_bf16_supported(),
     seed=42,
     loss_type="sigmoid",         # DPO standard (alternatives: ipo, hinge, kto)
+    model_adapter_name="default",
+    ref_adapter_name="reference",
     report_to="none",
 )
 
@@ -268,7 +260,9 @@ if chosen_col and rejected_col and len(logs) >= 5:
 # ## 6. Save adapter
 
 # %%
-trainer.model.save_pretrained(str(DPO_OUT))
+# Save only the trained adapter at the root. The duplicate reference adapter is
+# an implementation detail and must not become the model evaluated in NB4.
+trainer.model.save_pretrained(str(DPO_OUT), selected_adapters=["default"])
 tokenizer.save_pretrained(str(DPO_OUT))
 print(f"Saved DPO adapter to {DPO_OUT}")
 

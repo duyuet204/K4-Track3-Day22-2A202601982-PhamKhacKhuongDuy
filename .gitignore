@@ -13,11 +13,17 @@ __pycache__/
 # for grading). The Jupytext `.py` files are the source-of-truth template;
 # `.ipynb` is the student's executed deliverable.
 
-# Lab artifacts (regenerated on every run; do not commit)
-data/pref/
+# Lab artifacts. Commit the small files required by the submission verifier,
+# but continue ignoring checkpoints/weights and other regenerated outputs.
+data/pref/*
+!data/pref/train.parquet
+!data/pref/eval.parquet
 data/eval_prompts.json
-adapters/sft-mini/
-adapters/dpo/
+adapters/sft-mini/*
+!adapters/sft-mini/adapter_config.json
+adapters/dpo/*
+!adapters/dpo/adapter_config.json
+!adapters/dpo/dpo_metrics.json
 adapters/orpo/
 gguf/
 *.gguf
@@ -27,6 +33,11 @@ wandb/
 # HuggingFace cache (Colab + local — model weights are huge)
 .cache/
 hf_cache/
+
+# Raw Kaggle artifact bundle unpacked locally. It contains duplicated adapters,
+# generated trainer caches, and >100 MB weight files; keep it as a local backup
+# but never stage it for GitHub.
+lab22/
 
 # Env / secrets
 .env

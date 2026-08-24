@@ -65,6 +65,7 @@ assert torch.cuda.is_available(), "Need GPU for generation"
 
 # %%
 from unsloth import FastLanguageModel
+from unsloth.chat_templates import get_chat_template
 from peft import PeftModel
 import gc
 
@@ -79,6 +80,7 @@ def generate_with_adapter(adapter_path: Path, prompts: list[dict], max_new_token
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    tokenizer = get_chat_template(tokenizer, chat_template="qwen-2.5")
 
     model = PeftModel.from_pretrained(model, str(adapter_path))
     FastLanguageModel.for_inference(model)
@@ -283,12 +285,19 @@ def judge_with_anthropic(rows):
 # %%
 judge_results = None
 
-if os.environ.get("OPENAI_API_KEY"):
-    print("Found OPENAI_API_KEY — running gpt-4o-mini judge")
-    judge_results = judge_with_openai(rows)
-elif os.environ.get("ANTHROPIC_API_KEY"):
-    print("Found ANTHROPIC_API_KEY — running claude-haiku judge")
-    judge_results = judge_with_anthropic(rows)
+try:
+    if os.environ.get("OPENAI_API_KEY"):
+        print("Found OPENAI_API_KEY — running gpt-4o-mini judge")
+        judge_results = judge_with_openai(rows)
+    elif os.environ.get("ANTHROPIC_API_KEY"):
+        print("Found ANTHROPIC_API_KEY — running claude-haiku judge")
+        judge_results = judge_with_anthropic(rows)
+except Exception as exc:
+    # A missing billing balance, revoked key, transient network issue, or model
+    # permission must not discard the expensive training run.
+    print(f"API judge unavailable ({type(exc).__name__}: {exc}).")
+    print("Falling back to manual rubric mode; training artifacts remain valid.")
+    judge_results = None
 
 if judge_results is None:
     print("No API keys set. Falling back to manual rubric mode.")

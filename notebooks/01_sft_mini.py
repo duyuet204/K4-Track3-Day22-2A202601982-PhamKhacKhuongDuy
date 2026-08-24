@@ -41,7 +41,9 @@ else:  # BIGGPU
     PER_DEVICE_BATCH = 2
     GRAD_ACCUM = 4
 
-SFT_DATASET = os.environ.get("SFT_DATASET", "5CD-AI/Vietnamese-alpaca-cleaned")
+SFT_DATASET = os.environ.get(
+    "SFT_DATASET", "5CD-AI/Vietnamese-alpaca-gpt4-gg-translated"
+)
 SFT_SLICE = 1000
 NUM_EPOCHS = 1
 
@@ -72,6 +74,7 @@ print(f"GPU: {gpu.name}  ({gpu.total_memory / 1e9:.1f} GB)")
 
 # %%
 from unsloth import FastLanguageModel
+from unsloth.chat_templates import get_chat_template
 
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=BASE_MODEL,
@@ -79,6 +82,10 @@ model, tokenizer = FastLanguageModel.from_pretrained(
     dtype=None,                # auto: bf16 on Ampere+, fp16 on Turing
     load_in_4bit=True,
 )
+
+# The 4-bit base checkpoint currently does not ship a chat_template. Attach
+# Unsloth's Qwen2.5 template explicitly so formatting and later reloads agree.
+tokenizer = get_chat_template(tokenizer, chat_template="qwen-2.5")
 
 # Critical for batch training — Qwen tokenizers ship without pad token.
 if tokenizer.pad_token is None:
@@ -106,13 +113,32 @@ print(f"Trainable params: {sum(p.numel() for p in model.parameters() if p.requir
 # %% [markdown]
 # ## 2. Load + format VN Alpaca slice
 #
-# `5CD-AI/Vietnamese-alpaca-cleaned` is a 50k-row VN Alpaca translation. Lab 21
-# uses 1k slice for the demo run; we match that exactly so reward gap is comparable.
+# `5CD-AI/Vietnamese-alpaca-gpt4-gg-translated` is the VN Alpaca dataset supplied
+# by the lab coach. Lab 21 uses a 1k slice for the demo run; we match that scale.
 
 # %%
 from datasets import load_dataset
 
 ds = load_dataset(SFT_DATASET, split=f"train[:{SFT_SLICE}]")
+
+# The supplied dataset names its Vietnamese fields with a `_vi` suffix, while
+# the rest of this notebook intentionally uses the standard Alpaca schema.
+vi_columns = {
+    "instruction_vi": "instruction",
+    "input_vi": "input",
+    "output_vi": "output",
+}
+if set(vi_columns).issubset(ds.column_names):
+    ds = ds.rename_columns(vi_columns)
+
+required_columns = {"instruction", "input", "output"}
+missing_columns = required_columns.difference(ds.column_names)
+if missing_columns:
+    raise ValueError(
+        f"SFT dataset {SFT_DATASET!r} is missing required columns: "
+        f"{sorted(missing_columns)}; found {ds.column_names}"
+    )
+ds = ds.select_columns(["instruction", "input", "output"])
 print(f"Loaded {len(ds)} rows. Columns: {ds.column_names}")
 print(f"\nFirst row:\n{ds[0]}")
 
