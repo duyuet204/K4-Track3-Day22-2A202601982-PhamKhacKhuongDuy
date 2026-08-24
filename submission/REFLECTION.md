@@ -1,8 +1,8 @@
 # Reflection — Lab 22 (DPO/ORPO Alignment)
 
-**Tên:** Đào Kiều Thịnh Quang
+**Tên:** Phạm Khắc Khương Duy
 
-**Mã học viên:** 2A202601014
+**Mã học viên:** 2A202601982
 
 **Cohort:** 3
 
